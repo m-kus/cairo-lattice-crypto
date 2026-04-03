@@ -1,4 +1,4 @@
-scarb 2.15.1
+scarb 2.17.0-rc.4
 starknet-foundry 0.55.0
 universal-sierra-compiler 2.7.0
 starknet-devnet 0.7.1

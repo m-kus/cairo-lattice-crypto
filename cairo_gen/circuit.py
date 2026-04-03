@@ -703,46 +703,32 @@ use corelib_imports::bounded_int::bounded_int::{SubHelper, add, sub, mul};"""
     def _generate_felt252_imports(self) -> str:
         """Generate Cairo imports for felt252 mode."""
         return """// Auto-generated felt252 mode - DO NOT EDIT
-use corelib_imports::bounded_int::{BoundedInt, DivRemHelper, bounded_int_div_rem, upcast};
-use corelib_imports::integer::{U128sFromFelt252Result, u128s_from_felt252};
+use corelib_imports::bounded_int::{BoundedInt, DivRemHelper, bounded_int_div_rem, downcast, upcast};
 use crate::zq::{Zq, QConst, NZ_Q};
 """
 
     def _generate_felt252_constants(self) -> str:
         """Generate Cairo reduction types for felt252 mode.
 
-        Note: Circuit constants (twiddle factors) are generated as let bindings
-        inside the function rather than module-level const declarations.
+        Uses a tight BoundedInt for the shifted output range, avoiding u128 conversion.
+        downcast(felt252 → ShiftedMax) + bounded_int_div_rem replaces
+        felt252_as_u128 + upcast + bounded_int_div_rem.
         """
         lines = []
 
-        # Compute shift and max bounds for reduction types
         shift = self._compute_shift()
         max_bound = max(var.max_bound for var in self.variables.values())
         shifted_max = shift + max_bound
 
-        # Reduction machinery — QConst and NZ_Q come from crate::zq
         lines.append(f"const SHIFT: felt252 = {shift};")
+        lines.append(f"type ShiftedMax = BoundedInt<0, {shifted_max}>;")
 
-        u128_max = 2**128 - 1
-        lines.append(f"type U128AsBounded = BoundedInt<0, {u128_max}>;")
-
-        # DivRemHelper for u128-bounded / Q
-        div_max = u128_max // self.modulus
+        # DivRemHelper for ShiftedMax / Q
+        div_max = shifted_max // self.modulus
         lines.append("")
-        lines.append("impl DivRem_U128_QConst of DivRemHelper<U128AsBounded, QConst> {")
+        lines.append("impl DivRem_Shifted_QConst of DivRemHelper<ShiftedMax, QConst> {")
         lines.append(f"    type DivT = BoundedInt<0, {div_max}>;")
         lines.append("    type RemT = Zq;")
-        lines.append("}")
-
-        # Wrapper: extract low u128 from felt252 (both branches return low, no panic)
-        lines.append("")
-        lines.append("#[inline(always)]")
-        lines.append("fn felt252_as_u128(x: felt252) -> u128 {")
-        lines.append("    match u128s_from_felt252(x) {")
-        lines.append("        U128sFromFelt252Result::Narrow(low) => low,")
-        lines.append("        U128sFromFelt252Result::Wide((_, low)) => low,")
-        lines.append("    }")
         lines.append("}")
 
         return "\n".join(lines)
@@ -807,12 +793,34 @@ use crate::zq::{Zq, QConst, NZ_Q};
 
         lines.append(f"pub fn {func_name}({input_params}) -> {return_type} {{")
 
+        # Collect constants actually referenced by emitted operations
+        used_const_values = set()
+        for op in self.operations:
+            if op.op_type == "REDUCE":
+                continue
+            # Skip SHIFT-ADD operations
+            if op.op_type == "ADD":
+                is_shift_add = False
+                for operand in op.operands:
+                    if operand.min_bound == operand.max_bound:
+                        val = operand.min_bound
+                        if val in self.constants and self.constants[val].startswith("SHIFT_"):
+                            is_shift_add = True
+                            break
+                if is_shift_add:
+                    continue
+            for operand in op.operands:
+                if operand.min_bound == operand.max_bound:
+                    val = operand.min_bound
+                    if val in self.constants:
+                        used_const_values.add(val)
+
         # Generate let bindings for circuit constants (twiddle factors)
         # self.constants is value -> name mapping
         const_bindings = []
         for value, name in sorted(self.constants.items()):
-            # Skip SHIFT_ constants as they're part of bounded mode reduction
-            if not name.startswith("SHIFT_"):
+            # Skip SHIFT_ constants and unused constants
+            if not name.startswith("SHIFT_") and value in used_const_values:
                 const_bindings.append(f"    let {name} = {value};")
 
         if const_bindings:
@@ -872,7 +880,7 @@ use crate::zq::{Zq, QConst, NZ_Q};
                         # No shift, REDUCE directly on the variable
                         src_name = shifted_var.name
 
-            lines.append(f"    let {out_name}: U128AsBounded = upcast(felt252_as_u128({src_name} + SHIFT));")
+            lines.append(f"    let {out_name}: ShiftedMax = downcast({src_name} + SHIFT).unwrap();")
             lines.append(f"    let (_, {out_name}) = bounded_int_div_rem({out_name}, NZ_Q);")
 
         lines.append("")
