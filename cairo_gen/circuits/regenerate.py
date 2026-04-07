@@ -24,7 +24,7 @@ Examples:
     )
     parser.add_argument(
         "circuit",
-        choices=["ntt", "intt", "all"],
+        choices=["ntt", "intt", "mlkem_ntt", "all"],
         help="Which circuit to regenerate",
     )
     parser.add_argument(
@@ -72,6 +72,32 @@ Examples:
         print(f"\tStats: {stats}")
 
 
+
+    if args.circuit in ("mlkem_ntt", "all"):
+        from .mlkem_ntt import MlkemNttCircuitGenerator
+
+        gen = MlkemNttCircuitGenerator(n=256)
+        code = gen.generate_full(mode=args.mode)
+
+        mlkem_output_dir = Path(args.output_dir)
+        if args.circuit == "all":
+            # When regenerating all, put mlkem in its own package dir
+            mlkem_output_dir = Path("packages/mlkem/src")
+            mlkem_output_dir.mkdir(parents=True, exist_ok=True)
+
+        if args.mode == "felt252":
+            output_file = mlkem_output_dir / "ntt_felt252.cairo"
+        else:
+            output_file = mlkem_output_dir / "ntt_bounded_int.cairo"
+        output_file.write_text(code)
+
+        result = subprocess.run(["scarb", "fmt", str(output_file)], capture_output=True)
+        if result.returncode != 0:
+            print(f"Warning: scarb fmt failed (file may not be in a workspace)")
+
+        stats = gen.circuit.stats()
+        print(f"Generated {output_file}")
+        print(f"\tStats: {stats}")
 
     if args.circuit in ("intt", "all"):
         from .intt import InttCircuitGenerator

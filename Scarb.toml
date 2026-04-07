@@ -1,2 +1,6 @@
 [workspace]
-members = ["packages/falcon", "packages/falcon_old", "packages/falcon_zknox", "packages/falcon_account"]
+members = ["packages/falcon", "packages/falcon_old", "packages/falcon_zknox", "packages/mlkem"]
+
+[cairo]
+sierra-replace-ids = true
+enable-gas = false
